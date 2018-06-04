@@ -1,0 +1,31 @@
+apply plugin: 'maven'
+
+group = POM_GROUP
+version = POM_VERSION
+
+if (JavaVersion.current().isJava8Compatible()) {
+    allprojects {
+        tasks.withType(Javadoc) {
+            options.addStringOption('Xdoclint:none', '-quiet')
+        }
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+}
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            pom.groupId = POM_GROUP
+            pom.artifactId = POM_ARTIFACT_ID
+            pom.version = POM_VERSION
+
+            repository(url: uri("file://d:/123/")) {
+            }
+            snapshotRepository(url: uri("file://d:/123/")) {
+            }
+        }
+    }
+}

@@ -1,0 +1,5 @@
+include ':android-spi-annotation'
+include ':android-spi-compiler'
+include ':android-spi-loader'
+include ':android-spi-repository'
+

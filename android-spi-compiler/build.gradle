@@ -1,0 +1,36 @@
+buildscript {
+    ext.kotlin_version = '1.2.41'
+
+    repositories {
+        jcenter()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+apply plugin: 'kotlin'
+
+compileKotlin {
+    kotlinOptions {
+        apiVersion = "1.2"
+        jvmTarget = "1.6"
+    }
+}
+
+compileTestKotlin {
+    kotlinOptions.jvmTarget = "1.6"
+}
+
+dependencies {
+    compile gradleApi()
+    compile "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+
+    compileOnly 'com.android.tools.build:gradle:3.1.2'
+    compile 'javassist:javassist:3.12.1.GA'
+
+    compile 'me.yanglw:android-spi-annotation:1.0.0'
+}
+
+apply from: '../gradle-mvn-jcenter.gradle'
