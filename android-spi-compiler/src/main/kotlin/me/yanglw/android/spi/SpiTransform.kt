@@ -1,6 +1,7 @@
 package me.yanglw.android.spi
 
 import com.android.build.api.transform.*
+import com.android.build.gradle.AppExtension
 import com.android.build.gradle.internal.pipeline.TransformManager
 import com.google.common.collect.ImmutableSet
 import javassist.ClassPool
@@ -11,6 +12,7 @@ import javassist.bytecode.AnnotationsAttribute
 import javassist.bytecode.annotation.*
 import javassist.bytecode.annotation.Annotation
 import org.apache.commons.io.FileUtils
+import org.gradle.api.Project
 import java.io.File
 import java.io.IOException
 import java.util.*
@@ -25,7 +27,7 @@ import java.util.zip.ZipFile
  *
  * @see Transform
  */
-class SpiTransform : Transform() {
+class SpiTransform(val project: Project, val android: AppExtension) : Transform() {
     companion object {
         private const val SERVICE_REPOSITORY_CLASS_NAME: String = "me.yanglw.android.spi.ServiceRepository"
         private const val SERVICE_REPOSITORY_FIELD_NAME: String = "REPOSITORY"
@@ -63,6 +65,9 @@ class SpiTransform : Transform() {
             override fun getClassLoader(): ClassLoader {
                 return Loader(this)
             }
+        }
+        android.bootClasspath.forEach {
+            pool!!.appendClassPath(it.absolutePath)
         }
 
         loadAllClasses(transformInvocation.inputs, transformInvocation.outputProvider)

@@ -18,6 +18,6 @@ class SpiPlugin : Plugin<Project> {
             throw NullPointerException("not find com.android.application plugin.")
         }
         val android: AppExtension = target.extensions.findByName("android") as AppExtension
-        android.registerTransform(SpiTransform())
+        android.registerTransform(SpiTransform(target, android))
     }
 }
