@@ -28,7 +28,7 @@ dependencies {
     compile "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 
     compileOnly 'com.android.tools.build:gradle:3.1.2'
-    compile 'javassist:javassist:3.12.1.GA'
+    compile 'org.javassist:javassist:3.24.1-GA'
 
     compile 'me.yanglw:android-spi-annotation:1.0.0'
 }
