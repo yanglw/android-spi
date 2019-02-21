@@ -27,7 +27,7 @@ import java.util.zip.ZipFile
  *
  * @see Transform
  */
-class SpiTransform(val project: Project, val android: AppExtension) : Transform() {
+class SpiTransform(private val project: Project, private val android: AppExtension) : Transform() {
     companion object {
         private const val SERVICE_REPOSITORY_CLASS_NAME: String = "me.yanglw.android.spi.ServiceRepository"
         private const val SERVICE_REPOSITORY_FIELD_NAME: String = "REPOSITORY"
@@ -66,7 +66,9 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
                 return Loader(this)
             }
         }
+        log("=====================load boot class path=====================")
         android.bootClasspath.forEach {
+            log("load boot class path : ${it.absolutePath}")
             pool!!.appendClassPath(it.absolutePath)
         }
 
@@ -77,8 +79,10 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
 
     /** 加载项目所有的 jar 和 class 。 */
     private fun loadAllClasses(inputs: MutableCollection<TransformInput>, outputProvider: TransformOutputProvider) {
+        log("=====================load all classes=====================")
         inputs.forEach {
             it.jarInputs.forEach { jar ->
+                log("load jar : ${jar.file.absolutePath}")
                 val outFile = outputProvider.getContentLocation(jar.name,
                                                                 jar.contentTypes,
                                                                 jar.scopes,
@@ -86,12 +90,13 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
                 addJar(jar.file, outFile)
             }
 
-            it.directoryInputs.forEach { file ->
-                val outDir = outputProvider.getContentLocation(file.name,
-                                                               file.contentTypes,
-                                                               file.scopes,
+            it.directoryInputs.forEach { dir ->
+                log("load file : ${dir.file.absolutePath}")
+                val outDir = outputProvider.getContentLocation(dir.name,
+                                                               dir.contentTypes,
+                                                               dir.scopes,
                                                                Format.DIRECTORY)
-                addFile(file.file, file.file, outDir)
+                addFile(dir.file, dir.file, outDir)
             }
         }
     }
@@ -229,7 +234,14 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
         val singletonMemberValue = annotation.getMemberValue(
                 ServiceProvider::singleton.name) as? BooleanMemberValue
         val singleton = singletonMemberValue?.value ?: false
-        return AnnotationInfo(clazz.name, services.toTypedArray(), priorities, singleton)
+        val info = AnnotationInfo(clazz.name, services.toTypedArray(), priorities, singleton)
+
+        log("${info.className} annotation info :")
+        for (i in services.indices) {
+            log("    service : ${services[i]} , priority : ${priorities[i]}")
+        }
+        log("    singleton : $singleton")
+        return info
     }
 
     /** 将所有的 service provider 信息写入 ServiceRepository 。 */
@@ -268,35 +280,56 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
             it.value.sortDescending()
         }
 
+        log("=====================generate source info=====================")
+
         val ctClass = pool!!.get(SERVICE_REPOSITORY_CLASS_NAME)
         val mapField = ctClass.getField(SERVICE_REPOSITORY_FIELD_NAME)
         ctClass.removeField(mapField)
         ctClass.addField(mapField, "new java.util.HashMap(${providerMap.size})")
+        log("$SERVICE_REPOSITORY_FIELD_NAME size = ${providerMap.size}")
 
         val singleMap = TreeMap<String, String>()
 
+        var code : String
         val sb = StringBuilder("{")
         if (singletonSet.isNotEmpty()) {
             for ((i, name) in singletonSet.withIndex()) {
                 val objectName = "object$i"
-                sb.append("$name $objectName = new $name();")
+                code = "$name $objectName = new $name();"
+                sb.append(code)
+                log(code)
+
                 singleMap[name] = objectName
             }
         }
+
         if (providerMap.isNotEmpty()) {
-            sb.append("java.util.List list = null;")
+            code = "java.util.List list = null;"
+            sb.append(code)
+            log(code)
+
             providerMap.forEach { key, value ->
                 if (value.isEmpty()) {
                     return@forEach
                 }
-                sb.append("list = new java.util.LinkedList();")
-                sb.append("$SERVICE_REPOSITORY_FIELD_NAME.put($key.class, list);")
+                code = "list = new java.util.LinkedList();"
+                sb.append(code)
+                log(code)
+
+                code = "$SERVICE_REPOSITORY_FIELD_NAME.put($key.class, list);"
+                sb.append(code)
+                log(code)
+
                 value.forEach {
                     val singleObject = singleMap[it.name]
                     if (singleObject != null) {
-                        sb.append("list.add($singleObject);")
+                        code = "list.add($singleObject);"
+                        sb.append(code)
+                        log(code)
                     } else {
-                        sb.append("list.add(${it.name}.class);")
+                        code = "list.add(${it.name}.class);"
+                        sb.append(code)
+                        log(code)
                     }
                 }
             }
@@ -314,6 +347,10 @@ class SpiTransform(val project: Project, val android: AppExtension) : Transform(
                                                             ImmutableSet.of(QualifiedContent.Scope.PROJECT),
                                                             Format.DIRECTORY)
                                   .absolutePath)
+    }
+
+    private fun log(text: String) {
+        project.logger.info("$name -> $text")
     }
 }
 
