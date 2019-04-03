@@ -16,7 +16,7 @@ import java.util.ServiceConfigurationError;
  *
  * @see java.util.ServiceLoader
  */
-public class ServiceLoader<S> implements Iterable<S> {
+final public class ServiceLoader<S> implements Iterable<S> {
     private final Class<S> mService;
     private final List<S> mProviders;
 

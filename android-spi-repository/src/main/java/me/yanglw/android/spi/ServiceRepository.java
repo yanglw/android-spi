@@ -11,7 +11,7 @@ import java.util.List;
  *
  * Created by yanglw on 2018/4/19.
  */
-class ServiceRepository {
+final class ServiceRepository {
     /** <p>Service Provider 的存储容器。</p> */
     private static final HashMap<Class<?>, List<?>> REPOSITORY = new HashMap<>();
 
