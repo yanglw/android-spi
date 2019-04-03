@@ -5,12 +5,8 @@ import com.android.build.gradle.AppExtension
 import com.android.build.gradle.internal.pipeline.TransformManager
 import com.google.common.collect.ImmutableSet
 import javassist.ClassPool
-import javassist.CtClass
 import javassist.CtConstructor
 import javassist.Loader
-import javassist.bytecode.AnnotationsAttribute
-import javassist.bytecode.annotation.*
-import javassist.bytecode.annotation.Annotation
 import org.apache.commons.io.FileUtils
 import org.gradle.api.Project
 import java.io.File
@@ -28,329 +24,197 @@ import java.util.zip.ZipFile
  * @see Transform
  */
 class SpiTransform(private val project: Project, private val android: AppExtension) : Transform() {
-    companion object {
-        private const val SERVICE_REPOSITORY_CLASS_NAME: String = "me.yanglw.android.spi.ServiceRepository"
-        private const val SERVICE_REPOSITORY_FIELD_NAME: String = "REPOSITORY"
+  companion object {
+    private const val SERVICE_REPOSITORY_CLASS_NAME: String = "me.yanglw.android.spi.ServiceRepository"
+    private const val SERVICE_REPOSITORY_FIELD_NAME: String = "REPOSITORY"
+  }
+
+  private lateinit var pool: ClassPool
+
+  /** ServiceRepository 类所在的 jar 文件。 */
+  private lateinit var mRepositoryJarFile: File
+
+  /** 所有添加 [ServiceProvider] 注解的类的集合。 */
+  private val mAnnotationInfoList: MutableList<AnnotationInfo> = ArrayList()
+
+  override fun getName(): String = "androidSpi"
+
+  override fun getInputTypes(): Set<QualifiedContent.ContentType> = TransformManager.CONTENT_CLASS
+
+  override fun getScopes(): MutableSet<QualifiedContent.Scope> = TransformManager.SCOPE_FULL_PROJECT
+
+  override fun isIncremental(): Boolean = false
+
+  @Throws(TransformException::class, InterruptedException::class, IOException::class)
+  override fun transform(transformInvocation: TransformInvocation) {
+    transformInvocation.outputProvider.deleteAll()
+
+    pool = object : ClassPool(true) {
+      override fun getClassLoader(): ClassLoader = Loader(this)
+    }
+    log("=====================load boot class path=====================")
+    android.bootClasspath.forEach {
+      log("load boot class path : ${it.absolutePath}")
+      pool.appendClassPath(it.absolutePath)
     }
 
-    private var pool: ClassPool? = null
+    loadAllClasses(transformInvocation.inputs, transformInvocation.outputProvider)
 
-    /** ServiceRepository 类所在的 jar 文件。 */
-    private var mRepositoryJarFile: File? = null
+    generateServiceRepositoryClass(transformInvocation.outputProvider)
+  }
 
-    /** 所有添加 [ServiceProvider] 注解的类的集合。 */
-    private val mAllProviderSet: MutableList<ClassInfo> = ArrayList()
+  /** 加载项目所有的 jar 和 class 。 */
+  private fun loadAllClasses(inputs: MutableCollection<TransformInput>, outputProvider: TransformOutputProvider) {
+    log("=====================load all classes=====================")
+    inputs.forEach {
+      it.jarInputs.forEach { jar ->
+        log("load jar : ${jar.file.absolutePath}")
+        val outFile = outputProvider.getContentLocation(jar.name,
+                                                        jar.contentTypes,
+                                                        jar.scopes,
+                                                        Format.JAR)
+        addJar(jar.file, outFile)
+      }
 
-    override fun getName(): String {
-        return "androidSpi"
+      it.directoryInputs.forEach { dir ->
+        log("load file : ${dir.file.absolutePath}")
+        val outDir = outputProvider.getContentLocation(dir.name,
+                                                       dir.contentTypes,
+                                                       dir.scopes,
+                                                       Format.DIRECTORY)
+        addFile(dir.file)
+        FileUtils.copyFile(dir.file, outDir)
+      }
+    }
+  }
+
+  /** 增加 jar 。*/
+  private fun addJar(file: File, outFile: File) {
+    val zipFile = ZipFile(file)
+    zipFile.stream()
+        .filter { it.name.endsWith(".class", true) }
+        .map { return@map pool.fromInputStream(zipFile.getInputStream(it)) }
+        .peek { if (SERVICE_REPOSITORY_CLASS_NAME == it.name) mRepositoryJarFile = file }
+        .map { it.getAnnotationInfo() }
+        .filter { it != null }
+        .forEach { mAnnotationInfoList.add(it!!) }
+
+    if (mRepositoryJarFile != file) {
+      FileUtils.copyFile(file, outFile)
+    }
+  }
+
+  /**
+   * 添加 class 目录。将会递归遍历 class 文件和所有子文件夹。
+   *
+   * @param file 目标文件夹。
+   */
+  private fun addFile(file: File) {
+    if (file.isDirectory) {
+      file.listFiles()?.forEach { addFile(it) }
+    } else {
+      if (file.extension.equals("class", true)) {
+        val clz = pool.fromInputStream(file.inputStream())
+
+        val annotationInfo = clz.getAnnotationInfo()
+        if (annotationInfo != null) {
+          mAnnotationInfoList.add(annotationInfo)
+        }
+      }
+    }
+  }
+
+  /** 将所有的 service provider 信息写入 ServiceRepository 。 */
+  private fun generateServiceRepositoryClass(outputProvider: TransformOutputProvider) {
+    if (!::mRepositoryJarFile.isInitialized) {
+      return
     }
 
-    override fun getInputTypes(): Set<QualifiedContent.ContentType> {
-        return TransformManager.CONTENT_CLASS
+    // 所有 service provider 类的集合，根据 service 进行分组，同时根据 priorities 进行了排序。
+    val providerMap: MutableMap<String, MutableSet<ProviderInfo>> = HashMap()
+    // 所有单例模式的 service provider 类的集合。
+    val singletonSet: MutableSet<String> = TreeSet()
+
+    // 对所有的 service provider 进行分组。
+    for (annotation in mAnnotationInfoList) {
+      for (k in annotation.services.indices) {
+        val service: String = annotation.services[k]
+        val list = providerMap.getOrPut(service) { sortedSetOf() }
+        if (list.find { it.name == annotation.className } == null) {
+          list.add(ProviderInfo(annotation.className, annotation.priorities[k]))
+        }
+      }
+      if (annotation.singleton) {
+        singletonSet.add(annotation.className)
+      }
     }
 
-    override fun getScopes(): MutableSet<QualifiedContent.Scope> {
-        return TransformManager.SCOPE_FULL_PROJECT
+    log("=====================generate source info=====================")
+
+    val ctClass = pool.get(SERVICE_REPOSITORY_CLASS_NAME)
+    val mapField = ctClass.getDeclaredField(SERVICE_REPOSITORY_FIELD_NAME)
+    ctClass.removeField(mapField)
+    ctClass.addField(mapField, "new java.util.HashMap(${providerMap.size})")
+    log("$SERVICE_REPOSITORY_FIELD_NAME size = ${providerMap.size}")
+
+    val singleMap = mutableMapOf<String, String>()
+
+    var code: String
+    val sb = StringBuilder("{")
+    if (singletonSet.isNotEmpty()) {
+      for ((i, name) in singletonSet.withIndex()) {
+        val objectName = "object$i"
+        code = "$name $objectName = new $name();"
+        sb.append(code)
+        log(code)
+
+        singleMap[name] = objectName
+      }
     }
 
-    override fun isIncremental(): Boolean {
-        return false
-    }
+    if (providerMap.isNotEmpty()) {
+      code = "java.util.List list = null;"
+      sb.append(code)
+      log(code)
 
-    @Throws(TransformException::class, InterruptedException::class, IOException::class)
-    override fun transform(transformInvocation: TransformInvocation) {
-        transformInvocation.outputProvider.deleteAll()
-
-        pool = object : ClassPool(true) {
-            override fun getClassLoader(): ClassLoader {
-                return Loader(this)
-            }
+      providerMap.forEach { key, value ->
+        if (value.isEmpty()) {
+          return@forEach
         }
-        log("=====================load boot class path=====================")
-        android.bootClasspath.forEach {
-            log("load boot class path : ${it.absolutePath}")
-            pool!!.appendClassPath(it.absolutePath)
-        }
+        code = "list = new java.util.LinkedList();"
+        sb.append(code)
+        log(code)
 
-        loadAllClasses(transformInvocation.inputs, transformInvocation.outputProvider)
+        code = "$SERVICE_REPOSITORY_FIELD_NAME.put($key.class, list);"
+        sb.append(code)
+        log(code)
 
-        generateServiceRepositoryClass(transformInvocation.outputProvider)
-    }
-
-    /** 加载项目所有的 jar 和 class 。 */
-    private fun loadAllClasses(inputs: MutableCollection<TransformInput>, outputProvider: TransformOutputProvider) {
-        log("=====================load all classes=====================")
-        inputs.forEach {
-            it.jarInputs.forEach { jar ->
-                log("load jar : ${jar.file.absolutePath}")
-                val outFile = outputProvider.getContentLocation(jar.name,
-                                                                jar.contentTypes,
-                                                                jar.scopes,
-                                                                Format.JAR)
-                addJar(jar.file, outFile)
-            }
-
-            it.directoryInputs.forEach { dir ->
-                log("load file : ${dir.file.absolutePath}")
-                val outDir = outputProvider.getContentLocation(dir.name,
-                                                               dir.contentTypes,
-                                                               dir.scopes,
-                                                               Format.DIRECTORY)
-                addFile(dir.file, dir.file, outDir)
-            }
-        }
-    }
-
-    /** 增加 jar 。*/
-    private fun addJar(file: File, outFile: File) {
-        val zipFile = ZipFile(file)
-        zipFile.stream()
-                .filter {
-                    it.name.endsWith(".class", true)
-                }
-                .map {
-                    val inputStream = zipFile.getInputStream(it)
-                    val clz = pool!!.makeClass(inputStream)
-                    inputStream.close()
-                    return@map clz
-                }
-                .peek {
-                    if (SERVICE_REPOSITORY_CLASS_NAME == it.name) {
-                        mRepositoryJarFile = file
-                    }
-                }
-                .map { parserAnnotationInfo(it) }
-                .filter { it != null }
-                .map {
-                    ClassInfo(it!!.className,
-                              file, outFile,
-                              it)
-                }
-                .forEach {
-                    mAllProviderSet.add(it!!)
-                }
-
-        if (mRepositoryJarFile != file) {
-            FileUtils.copyFile(file, outFile)
-        }
-    }
-
-    /** 添加 class 或者 class 目录。 */
-    private fun addFile(file: File, inputDir: File, outDir: File) {
-        if (file.isDirectory) {
-            FileUtils.copyDirectory(file, File(outDir, file.relativeTo(inputDir).path))
-        } else {
-            FileUtils.copyFile(file, File(outDir, file.relativeTo(inputDir).path))
-        }
-
-        loadClassFile(pool!!, file, inputDir, outDir)
-    }
-
-    /**
-     * 递归遍历 class 文件和文件夹。
-     *
-     * @param file 目标文件/文件夹。
-     * @param inputDir 目标文件/文件夹的起始目录。
-     * @param outDir 目标文件/文件夹的输入目录的起始目录。
-     */
-    private fun loadClassFile(pool: ClassPool, file: File, inputDir: File, outDir: File) {
-        if (file.isDirectory) {
-            file.listFiles()?.forEach {
-                loadClassFile(pool, it, inputDir, outDir)
-            }
-        } else {
-            if (file.extension.equals("class", true)) {
-                val inputStream = file.inputStream()
-                val clz = pool.makeClass(inputStream)
-                inputStream.close()
-                val outFile = File(outDir, file.relativeTo(inputDir).path)
-                val annotationInfo = parserAnnotationInfo(clz)
-                if (annotationInfo != null) {
-                    mAllProviderSet.add(ClassInfo(annotationInfo.className,
-                                                  file,
-                                                  outFile,
-                                                  annotationInfo))
-                }
-            }
-        }
-    }
-
-    /**
-     * 从 CtClass 中获取 [ServiceProvider] 注解的信息。
-     *
-     * @return 若该 CtClass 有 [ServiceProvider] 注解，则返回 [ServiceProvider] 的信息，否则返回 null 。
-     *
-     * @throws IllegalArgumentException 若 CtClass 有 [ServiceProvider] 注解，但是 [ServiceProvider.services] 为 null 或者空数组。
-     */
-    private fun parserAnnotationInfo(clazz: CtClass): AnnotationInfo? {
-        val classFile = clazz.classFile
-        var annotation: Annotation? = null
-
-        var attribute = classFile.getAttribute(AnnotationsAttribute.visibleTag)
-        if (attribute != null && attribute is AnnotationsAttribute) {
-            annotation = attribute.getAnnotation(ServiceProvider::class.java.name)
-        } else {
-            attribute = classFile.getAttribute(AnnotationsAttribute.invisibleTag)
-            if (attribute != null && attribute is AnnotationsAttribute) {
-                annotation = attribute.getAnnotation(ServiceProvider::class.java.name)
-            }
-        }
-
-        if (annotation == null) {
-            return null
-        }
-
-        // 获取 services 的值。
-        val servicesMemberValue = annotation.getMemberValue(
-                ServiceProvider::services.name) as ArrayMemberValue
-        if (servicesMemberValue.value.isEmpty()) {
-            throw IllegalArgumentException("services is null or empty")
-        }
-        val services: MutableList<String> = ArrayList()
-        servicesMemberValue.value.forEach {
-            if (it is ClassMemberValue) {
-                services.add(it.value)
-            }
-        }
-
-        // 获取 priorities 的值。
-        val prioritiesMemberValue = annotation.getMemberValue(
-                ServiceProvider::priorities.name) as? ArrayMemberValue
-        val prioritiesValues = if (prioritiesMemberValue == null || prioritiesMemberValue.value.isEmpty()) {
-            IntArray(services.size)
-        } else {
-            prioritiesMemberValue.value
-                    .map {
-                        (it as? IntegerMemberValue)?.value ?: 0
-                    }
-                    .toIntArray()
-        }
-        val priorities = IntArray(services.size)
-        System.arraycopy(prioritiesValues, 0,
-                         priorities, 0,
-                         if (services.size > prioritiesValues.size) prioritiesValues.size else services.size)
-
-        // 获取 singleton 的值。
-        val singletonMemberValue = annotation.getMemberValue(
-                ServiceProvider::singleton.name) as? BooleanMemberValue
-        val singleton = singletonMemberValue?.value ?: false
-        val info = AnnotationInfo(clazz.name, services.toTypedArray(), priorities, singleton)
-
-        log("${info.className} annotation info :")
-        for (i in services.indices) {
-            log("    service : ${services[i]} , priority : ${priorities[i]}")
-        }
-        log("    singleton : $singleton")
-        return info
-    }
-
-    /** 将所有的 service provider 信息写入 ServiceRepository 。 */
-    private fun generateServiceRepositoryClass(outputProvider: TransformOutputProvider) {
-        if (mRepositoryJarFile == null) {
-            return
-        }
-
-        // 所有 service provider 类的集合，根据 service 进行分组，同时根据 priorities 进行了排序。
-       val providerMap:  MutableMap<String, MutableList<ProviderInfo>> = HashMap()
-        // 所有单例模式的 service provider 类的集合。
-       val singletonSet: MutableSet<String> = TreeSet()
-
-        // 对所有的 service provider 进行分组。
-        for (i in mAllProviderSet.indices) {
-            val classInfo = mAllProviderSet[i]
-            val annotation = classInfo.annotation
-            for (k in annotation.services.indices) {
-                val service: String = annotation.services[k]
-                var list: MutableList<ProviderInfo>? = providerMap[service]
-                if (list == null) {
-                    list = LinkedList()
-                    providerMap[service] = list
-                }
-                if (list.find { it.name == classInfo.name } == null) {
-                    list.add(ProviderInfo(classInfo.name, annotation.priorities[k]))
-                }
-            }
-            if (annotation.singleton) {
-                singletonSet.add(classInfo.name)
-            }
-        }
-
-        // 对 service provider 进行降序排序。
-        providerMap.forEach {
-            it.value.sortDescending()
-        }
-
-        log("=====================generate source info=====================")
-
-        val ctClass = pool!!.get(SERVICE_REPOSITORY_CLASS_NAME)
-        val mapField = ctClass.getField(SERVICE_REPOSITORY_FIELD_NAME)
-        ctClass.removeField(mapField)
-        ctClass.addField(mapField, "new java.util.HashMap(${providerMap.size})")
-        log("$SERVICE_REPOSITORY_FIELD_NAME size = ${providerMap.size}")
-
-        val singleMap = TreeMap<String, String>()
-
-        var code : String
-        val sb = StringBuilder("{")
-        if (singletonSet.isNotEmpty()) {
-            for ((i, name) in singletonSet.withIndex()) {
-                val objectName = "object$i"
-                code = "$name $objectName = new $name();"
-                sb.append(code)
-                log(code)
-
-                singleMap[name] = objectName
-            }
-        }
-
-        if (providerMap.isNotEmpty()) {
-            code = "java.util.List list = null;"
+        value.forEach {
+          val singleObject = singleMap[it.name]
+          if (singleObject != null) {
+            code = "list.add($singleObject);"
             sb.append(code)
             log(code)
-
-            providerMap.forEach { key, value ->
-                if (value.isEmpty()) {
-                    return@forEach
-                }
-                code = "list = new java.util.LinkedList();"
-                sb.append(code)
-                log(code)
-
-                code = "$SERVICE_REPOSITORY_FIELD_NAME.put($key.class, list);"
-                sb.append(code)
-                log(code)
-
-                value.forEach {
-                    val singleObject = singleMap[it.name]
-                    if (singleObject != null) {
-                        code = "list.add($singleObject);"
-                        sb.append(code)
-                        log(code)
-                    } else {
-                        code = "list.add(${it.name}.class);"
-                        sb.append(code)
-                        log(code)
-                    }
-                }
-            }
+          } else {
+            code = "list.add(${it.name}.class);"
+            sb.append(code)
+            log(code)
+          }
         }
-        sb.append('}')
-
-        var staticConstructor: CtConstructor? = ctClass.classInitializer
-        if (staticConstructor == null) {
-            staticConstructor = ctClass.makeClassInitializer()
-            ctClass.addConstructor(staticConstructor)
-        }
-        staticConstructor!!.setBody(sb.toString())
-        ctClass.writeFile(outputProvider.getContentLocation(SERVICE_REPOSITORY_CLASS_NAME,
-                                                            TransformManager.CONTENT_CLASS,
-                                                            ImmutableSet.of(QualifiedContent.Scope.PROJECT),
-                                                            Format.DIRECTORY)
-                                  .absolutePath)
+      }
     }
+    sb.append('}')
 
-    private fun log(text: String) {
-        project.logger.info("$name -> $text")
-    }
+    val staticConstructor: CtConstructor = ctClass.makeClassInitializer()
+    staticConstructor.setBody(sb.toString())
+    ctClass.writeFile(outputProvider.getContentLocation(SERVICE_REPOSITORY_CLASS_NAME,
+                                                        TransformManager.CONTENT_CLASS,
+                                                        ImmutableSet.of(QualifiedContent.Scope.PROJECT),
+                                                        Format.DIRECTORY)
+                          .absolutePath)
+  }
+
+  private fun log(text: String) {
+    project.logger.info("$name -> $text")
+  }
 }
-
