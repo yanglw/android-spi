@@ -4,14 +4,13 @@ buildscript {
     }
 
     dependencies{
-        classpath 'com.jfrog.bintray.gradle:gradle-bintray-plugin:1.8.0'
+        classpath 'com.jfrog.bintray.gradle:gradle-bintray-plugin:1.8.4'
     }
 }
 
 allprojects {
     repositories {
         jcenter()
-        maven{url 'https://maven.google.com'}
-        maven{url 'https://dl.bintray.com/yanglw/maven'}
+        google()
     }
 }
