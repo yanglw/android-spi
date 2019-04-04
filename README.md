@@ -12,6 +12,8 @@
 
 本库已经上传至 jcenter 仓库中，添加 jcenter 仓库便可以通过远程依赖的方式使用本库了。
 
+![GitHub release](https://img.shields.io/github/release/yanglw/android-spi.svg?label=version)
+
 ```groovy
 allprojects {
     repositories {
