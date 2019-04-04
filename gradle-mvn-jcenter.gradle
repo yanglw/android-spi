@@ -1,3 +1,7 @@
+if (!hasProperty('BINTRAY_API_KEY')) {
+    return
+}
+
 apply plugin: 'maven'
 apply plugin: 'com.jfrog.bintray'
 
