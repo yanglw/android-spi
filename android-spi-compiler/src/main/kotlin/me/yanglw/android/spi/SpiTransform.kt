@@ -99,7 +99,7 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
         .filter { it != null }
         .forEach { mAnnotationInfoList.add(it!!) }
 
-    if (mRepositoryJarFile != file) {
+    if (!::mRepositoryJarFile.isInitialized || mRepositoryJarFile != file) {
       FileUtils.copyFile(file, outFile)
     }
   }
