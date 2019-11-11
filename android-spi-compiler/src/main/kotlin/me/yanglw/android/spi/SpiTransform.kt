@@ -83,7 +83,12 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
                                                        dir.scopes,
                                                        Format.DIRECTORY)
         addFile(dir.file)
-        FileUtils.copyFile(dir.file, outDir)
+        if (dir.file.isDirectory) {
+          FileUtils.copyDirectory(dir.file, outDir)
+        }
+        else {
+          FileUtils.copyFile(dir.file, outDir)
+        }
       }
     }
   }
@@ -177,7 +182,7 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
       sb.append(code)
       log(code)
 
-      providerMap.forEach { key, value ->
+      providerMap.forEach { (key, value) ->
         if (value.isEmpty()) {
           return@forEach
         }
