@@ -2,7 +2,7 @@ apply plugin: 'kotlin'
 
 compileKotlin {
     kotlinOptions {
-        apiVersion = "1.2"
+        apiVersion = "$kotlin_version"
         jvmTarget = "1.6"
     }
 }
@@ -13,7 +13,7 @@ compileTestKotlin {
 
 dependencies {
     compile gradleApi()
-    compile "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    compile "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 
     compileOnly 'com.android.tools.build:gradle:3.1.2'
     compile 'org.javassist:javassist:3.24.1-GA'
