@@ -6,8 +6,8 @@ compileJava {
 }
 
 dependencies {
-    compile "me.yanglw:android-spi-annotation:$POM_VERSION"
-    compile "me.yanglw:android-spi-repository:$POM_VERSION"
+    compile project(":android-spi-annotation")
+    compile project(":android-spi-repository")
 }
 
 apply from: '../gradle-mvn-jcenter.gradle'
