@@ -85,8 +85,7 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
         addFile(dir.file)
         if (dir.file.isDirectory) {
           FileUtils.copyDirectory(dir.file, outDir)
-        }
-        else {
+        } else {
           FileUtils.copyFile(dir.file, outDir)
         }
       }
@@ -102,7 +101,10 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
         .peek { if (SERVICE_REPOSITORY_CLASS_NAME == it.name) mRepositoryJarFile = file }
         .map { it.getAnnotationInfo() }
         .filter { it != null }
-        .forEach { mAnnotationInfoList.add(it!!) }
+        .forEach {
+          log(it!!)
+          mAnnotationInfoList.add(it)
+        }
 
     if (!::mRepositoryJarFile.isInitialized || mRepositoryJarFile != file) {
       FileUtils.copyFile(file, outFile)
@@ -123,6 +125,7 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
 
         val annotationInfo = clz.getAnnotationInfo()
         if (annotationInfo != null) {
+          log(annotationInfo)
           mAnnotationInfoList.add(annotationInfo)
         }
       }
@@ -135,8 +138,8 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
       return
     }
 
-    // 所有 service provider 类的集合，根据 service 进行分组，同时根据 priorities 进行了排序。
-    val providerMap: MutableMap<String, MutableSet<ProviderInfo>> = HashMap()
+    // 所有 service provider 类的集合，根据 service 进行分组。
+    val providerMap: MutableMap<String, MutableList<ProviderInfo>> = HashMap()
     // 所有单例模式的 service provider 类的集合。
     val singletonSet: MutableSet<String> = TreeSet()
 
@@ -144,15 +147,27 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
     for (annotation in mAnnotationInfoList) {
       for (k in annotation.services.indices) {
         val service: String = annotation.services[k]
-        val list = providerMap.getOrPut(service) { sortedSetOf() }
+        val list = providerMap.getOrPut(service) { mutableListOf() }
         if (list.find { it.name == annotation.className } == null) {
           list.add(ProviderInfo(annotation.className, annotation.priorities[k]))
         }
       }
+
       if (annotation.singleton) {
         singletonSet.add(annotation.className)
       }
     }
+
+    log("=====================collect result:services list=====================")
+    providerMap.forEach { (key, value) ->
+      // 将 Provider 根据 priority 属性排序。
+      value.sort()
+      log(key)
+      value.forEach { log("    ${it.name} --> priority = ${it.priority}") }
+    }
+    log("=====================collect result:singleton list=====================")
+    singletonSet.forEach { log(it) }
+
 
     log("=====================generate source info=====================")
 
@@ -221,5 +236,12 @@ class SpiTransform(private val project: Project, private val android: AppExtensi
 
   private fun log(text: String) {
     project.logger.info("$name -> $text")
+  }
+
+  private fun log(info: AnnotationInfo) {
+    log("${info.className} --> singleton = ${info.singleton}")
+    info.services.forEachIndexed { index, s ->
+      log("    $s priority = ${info.priorities[index]}")
+    }
   }
 }
