@@ -8,7 +8,23 @@ image: openjdk:8
 pipelines:
   default:
     - step:
-        script: # Modify the commands below to build your repository.
-          # You must commit the Gradle wrapper to your repository
-          # https://docs.gradle.org/current/userguide/gradle_wrapper.html
-          - bash ./gradlew -PBINTRAY_API_KEY=$BINTRAY_API_KEY -PBINTRAY_USER=$BINTRAY_USER clean bintrayUpload
+        script:
+          - mkdir -p $BITBUCKET_CLONE_DIR/.gnupg
+          - echo -n $GPG_PRIVATE_KEY | base64 --decode >> $BITBUCKET_CLONE_DIR/.gnupg/private.gpg
+          - >
+            if [ ! -f $BITBUCKET_CLONE_DIR/.gnupg/private.gpg ]; then
+                echo "$BITBUCKET_CLONE_DIR/.gnupg/private.gpg not created!"
+                exit 1
+            fi
+          - >
+            ./gradlew publish --no-daemon --no-parallel
+            -Psigning.keyId=E30278D2
+            -Psigning.password=$SIGNING_PASSWORD
+            -Psigning.secretKeyRingFile=$BITBUCKET_CLONE_DIR/.gnupg/private.gpg
+            -PmavenCentralUsername=$mavenCentralUsername
+            -PmavenCentralPassword=$mavenCentralPassword
+          - >
+            ./gradlew closeAndReleaseRepository
+            -PmavenCentralUsername=$mavenCentralUsername
+            -PmavenCentralPassword=$mavenCentralPassword
+          - rm -rf $BITBUCKET_CLONE_DIR/.gnupg

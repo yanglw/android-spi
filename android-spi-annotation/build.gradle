@@ -1,8 +1,13 @@
 apply plugin: 'java'
+apply plugin: "com.vanniktech.maven.publish"
 
 compileJava {
     sourceCompatibility = JavaVersion.VERSION_1_7
     targetCompatibility = JavaVersion.VERSION_1_7
 }
 
-apply from: '../gradle-mvn-jcenter.gradle'
+tasks.withType(Javadoc) {
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.addStringOption('encoding', 'UTF-8')
+    options.addStringOption('charSet', 'UTF-8')
+}
